@@ -218,7 +218,7 @@
       '</tr>',
     HOUR_HEAD_CELL: '<th class="scheduler-hour-toggle" data-hour-toggle="%s" colspan="%s">%s</th>',
     DAY_ROW: '<tr data-index="%s"><td class="scheduler-day-toggle" data-day-toggle="%s">%s</td>%s</tr>',
-    HOUR_CELL: '<td class="scheduler-hour%s" data-row="%s" data-col="%s"></td>',
+    HOUR_CELL: '<td class="scheduler-hour%s" style="background-color: %s;" data-row="%s" data-col="%s"></td>',
     FOOT_ROW: '<tr><td colspan="%s"><span class="scheduler-tips">%s</span><a class="scheduler-reset">%s</a></td></tr>'
   };
 
@@ -275,11 +275,6 @@
       me.$head = $('<thead></thead>').appendTo(me.$el);
     }
     me.$head.append(me.getHeadHtml());
-
-    // toggle select half day
-    me.$head.on('click', '.scheduler-half-toggle', me.onToggleHalfDay.bind(me));
-    // toggle select an hour
-    me.$head.on('click', '.scheduler-hour-toggle', me.onToggleHour.bind(me));
   };
 
   proto.initBody = function () {
@@ -290,13 +285,6 @@
       me.$body = $('<tbody></tbody>').appendTo(me.$el);
     }
     me.$body.append(me.getBodyHtml(me.options.data));
-
-    // toggle select day
-    me.$body.on('click', '.scheduler-day-toggle', me.onToggleDay.bind(me));
-    // range toggle select hour
-    me.$body.on('mousedown', '.scheduler-hour', me.onMouseDown.bind(me))
-      .on('mousemove', '.scheduler-hour', me.onMouseMove.bind(me))
-      .on('mouseup', '.scheduler-hour', me.onMouseUp.bind(me));
   };
 
   proto.initFoot = function () {
@@ -306,7 +294,6 @@
       me.$foot = $('<tfoot></tfoot>').appendTo(me.$el);
     }
     me.$foot.append(me.getFootHtml());
-    me.$foot.on('click', '.scheduler-reset', me.onReset.bind(me));
   };
 
   proto.getHeadHtml = function (data) {
@@ -353,9 +340,12 @@
       var cells = '';
       var selectedHours = data[i];
       for (var j = 0; j < cellOfRow; j++) {
+        var appointment = selectedHours && selectedHours.hasOwnProperty(j);
+
         cells += sprintf(
           $.fn.scheduler.templates.HOUR_CELL,
-          selectedHours && ~selectedHours.indexOf(j) ? ' scheduler-active' : '',
+          appointment ? ' scheduler-active' : '',
+          appointment ? options.getCellColor(selectedHours[j]) : '',
           i,
           j
         );
@@ -372,274 +362,12 @@
     return rows;
   };
 
-  // toggle select one day
-  proto.onToggleDay = function (e) {
-    if (this.options.disabled) {
-      return;
-    }
-    var index = $(e.target).parent().data('index');
-    var startCoord = [index, 0]; // [row, col] row start form 1
-    var endCoord = [index, 24 * this.options.accuracy - 1];
-    var selectMode = this.getRangeSelectMode(startCoord, endCoord);
-    this.updateToggle(startCoord, endCoord, selectMode);
-  };
-
-  // toggle select half day
-  proto.onToggleHalfDay = function (e) {
-    if (this.options.disabled) {
-      return;
-    }
-    var index = $(e.target).data('halfToggle'); // index = 1 | 2
-    var fromIndex = (index - 1) * 12 * this.options.accuracy;
-    var toIndex = fromIndex + 12 * this.options.accuracy - 1;
-    var startCoord = [1, fromIndex]; // [row, col] row start form 1
-    var endCoord = [7, toIndex];
-    var selectMode = this.getRangeSelectMode(startCoord, endCoord);
-    this.updateToggle(startCoord, endCoord, selectMode);
-  };
-
-  // toggle select an hour
-  proto.onToggleHour = function (e) {
-    if (this.options.disabled) {
-      return;
-    }
-    var index = $(e.target).data('hourToggle'); // index = 1 | 2
-    var fromIndex = index * this.options.accuracy;
-    var toIndex = fromIndex + this.options.accuracy - 1;
-    var startCoord = [1, fromIndex]; // [row, col] row start form 1
-    var endCoord = [7, toIndex];
-    var selectMode = this.getRangeSelectMode(startCoord, endCoord);
-    this.updateToggle(startCoord, endCoord, selectMode);
-  };
-
-  proto.onMouseDown = function (e) {
-    if (this.options.disabled) {
-      return;
-    }
-    this.moving = true;
-    var $cell = $(e.target);
-    this.startCoord = [$cell.data('row'), $cell.data('col')];
-    this.endCoord = this.startCoord.slice(0);
-    this.selectMode = this.getCellSelectMode(this.startCoord);
-    this.updateRange(this.startCoord, this.endCoord, this.selectMode);
-    this.options.onDragStart.call(this.$el, this.cache);
-  };
-
-  proto.onMouseMove = function (e) {
-    if (!this.moving) {
-      return false;
-    }
-    var $cell = $(e.target);
-    var row = $cell.data('row');
-    var col = $cell.data('col');
-    if (!this.selectMode || !this.startCoord || (this.endCoord &&
-                                                 this.endCoord[0] === row &&
-                                                 this.endCoord[1] === col)
-       ) {
-      return false;
-    }
-    this.endCoord = [$cell.data('row'), $cell.data('col')];
-    this.updateRange(this.startCoord, this.endCoord, this.selectMode);
-    this.options.onDragMove.call(this.$el, this.cache);
-  };
-
-  proto.onMouseUp = function (e) {
-    if (!this.moving) {
-      return false;
-    }
-    // 起始点都在同一个位置
-    if (this.startCoord[0] === this.endCoord[0] &&
-        this.startCoord[1] === this.endCoord[1]) {
-      this.updateRange(this.startCoord, this.endCoord, this.selectMode);
-    }
-    this.options.onDragEnd.call(this.$el, this.cache);
-    this.end();
-  };
-
-  /**
-   * 根据当前的选中坐标系更新视图，并更新选中数据
-   * @param {Array} startCoord 起始坐标 [row, col]
-   * @param {Array} endCoord 终结坐标 [row, col]
-   * @param {SelectMode} selectMode 选择模式
-   */
-  proto.updateToggle = function (startCoord, endCoord, selectMode) {
-    this.updateRange(startCoord, endCoord, selectMode);
-    this.end();
-  };
-
-  /**
-   * 根据当前的选中坐标系更新视图
-   * @param {Array} startCoord 起始坐标 [row, col]
-   * @param {Array} endCoord 终结坐标 [row, col]
-   * @param {SelectMode} selectMode 选择模式
-   */
-  proto.updateRange = function (startCoord, endCoord, selectMode) {
-    var currentSelectRange = makeMatrix(startCoord, endCoord);
-    this.cache = this.merge(this.data, currentSelectRange, selectMode);
-    this.update(this.cache);
-  };
-
   /**
    * 更新视图
    * @param {Object} data 选中的时间集合
    */
   proto.update = function (data) {
     this.$body.html(this.getBodyHtml(data));
-  };
-
-  // 并更新选中数据
-  proto.end = function () {
-    this.data = this.cache;
-    this.cache = null;
-    this.moving = false;
-    this.startCoord = null;
-    this.endCoord = null;
-    this.selectMode = SelectMode.NONE;
-    this.options.onSelect.call(this.$el, this.val());
-  };
-
-  proto.onReset = function () {
-    if (this.options.disabled) {
-      return;
-    }
-    this.val({});
-    this.options.onSelect.call(this.$el, this.val());
-  };
-
-  /**
-   * 根据选择模式合并合个集合
-   * @param {Object} origin 上一次选中的数据
-   * @param {Object} current 当前选中的数据
-   * @param {Number} selectMode 选择模式 {0: none, 1: 选择（合并）模式, 2: 排除模式（从选区中减去）}
-   */
-  proto.merge = function (origin, current, selectMode) {
-    var res = {};
-    // 替换模式下，弃用之前的选区，直接使用当前选区
-    if (selectMode === SelectMode.REPLACE) {
-      for (var i = 1; i <= 7; i++) {
-        if (current[i] && current[i].length) {
-          res[i] = current[i].slice(0);
-        }
-      }
-      return res;
-    }
-    for (var i = 1; i <= 7; i++) {
-      if (!current[i]) {
-        if (origin[i] && origin[i].length) {
-          res[i] = origin[i].slice(0);
-        }
-        continue;
-      }
-      if (origin[i] && origin[i].length) {
-        var m = selectMode === SelectMode.JOIN ?
-          mergeArray(origin[i], current[i]) :
-          rejectArray(origin[i], current[i]);
-        m.length && (res[i] = m);
-      } else if (selectMode === SelectMode.JOIN) {
-        res[i] = current[i].slice(0);
-      }
-    }
-    return res;
-  };
-
-  /**
-   * 根据当前选中的范围内时间格式的空闲情况，决定是全选还是全不选
-   * 全空闲：总时间格目 === 空闲时间格数目
-   * 部分空闲：总时间格目 !== 空闲时间格数目
-   * 无空闲：空闲时间格数目 === 0
-   * 状态切换：
-   * 当前范围全空闲 > 采用合并模式，全选当前范围
-   * 部分空闲 > 采用合并模式，全选当前范围
-   * 无空闲 > 采用合并模式，全不选当前范围
-   *
-   * @param {Array} startCoord 起始坐标 [row, col]
-   * @param {Array} endCoord 终结坐标 [row, col]
-   * @return {SelectMode}
-   */
-  proto.getRangeSelectMode = function (startCoord, endCoord) {
-    if (!this.options.multiple) {
-      return SelectMode.REPLACE;
-    }
-    var rowRange = this.sortCoord(startCoord[0], endCoord[0]);
-    var colRange = this.sortCoord(startCoord[1], endCoord[1]);
-    var startRow = rowRange[0];
-    var endRow = rowRange[1];
-    var startCol = colRange[0];
-    var endCol = colRange[1];
-    var rows = endRow - startRow + 1;
-    var cols = endCol - startCol + 1;
-    var total = rows * cols;
-
-    // 计算已使用的时间格子
-    // TODO 未过滤 disabled 的格子
-    var used = 0;
-    for (var i = 0; i < rows; i++) {
-      var day = startRow + i;
-      var data = this.data[day];
-      if (!data) {
-        continue;
-      }
-      for (var j = 0; j < data.length; j++) {
-        if (data[j] >= startCol && data[j] <= endCol) {
-          used++;
-        }
-      }
-    }
-
-    return total === used ? SelectMode.MINUS : SelectMode.JOIN;
-  };
-
-  /**
-   * 根据当前选中的时间格式的空闲情况，决定是全选还是全不选
-   * 状态切换：
-   * 当前为单选模式(multiple=false)，-> 替换模式
-   * 当前选中时间段为空闲 -> 全选不
-   * 当前选中时间段为无空闲 - > 全不选
-   *
-   * @param {Array} startCoord 起始坐标 [row, col]
-   * @return {SelectMode}
-   */
-  proto.getCellSelectMode = function (coord) {
-    if (!this.options.multiple) {
-      return SelectMode.REPLACE;
-    }
-    // TODO 未过滤 disabled 的格子
-    var day = this.data[coord[0]];
-    return day && ~day.indexOf(coord[1]) ? SelectMode.MINUS : SelectMode.JOIN;
-  };
-
-  proto.sortCoord = function (num1, num2) {
-    if (num1 > num2) {
-      return [num2, num1];
-    }
-    return [num1, num2];
-  };
-
-  proto.disable = function () {
-    this.$el.toggleClass('scheduler-disabled', true);
-    this.options.disabled = true;
-  };
-
-  proto.enable = function () {
-    this.$el.toggleClass('scheduler-disabled', false);
-    this.options.disabled = false;
-  };
-
-  /**
-   * 如果无传参，则作为 Getter, 否则为 Setter
-   * @param {Array} data optional 选中的内容
-   * @return {Array} 返回当前选中的内容
-   */
-  proto.val = function (data) {
-    // setter
-    if (toStr(data) === '[object Object]') {
-      // TODO 数据结构校验
-      this.data = data;
-      this.update(data);
-
-    } else { // getter
-      return this.merge(this.data, {}, SelectMode.JOIN);
-    }
   };
 
   proto.destroy = function () {
